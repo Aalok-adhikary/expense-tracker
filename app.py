@@ -43,7 +43,7 @@ if 'expenses' not in st.session_state:
 
 # --- GEMINI AI INTEGRATION ---
 async def get_ai_advice(query, context_data):
-    api_key = "AIzaSyDmpU79UXqNMdlzPiI7hkTN1ABBEPODYnA" # Environment provides key
+    api_key = "AQ.Ab8RN6Jz2ThgIRNH4InHzZv5S_VSkAh76gUMHr1mA7ru1rbQmQ" # Environment provides key
     system_prompt = "You are an expert Indian Financial Advisor. Analyze the user's spending data in INR (₹) and provide advice relevant to Indian tax laws, savings schemes like PPF/ELSS, and local spending habits."
     user_query = f"Here is my Indian spending summary (all amounts in ₹): {context_data}. Question: {query}"
     
