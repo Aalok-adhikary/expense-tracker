@@ -23,7 +23,7 @@ def apply_custom_styles():
         
         /* Glassmorphism Cards */
         .metric-card {
-            background: white;
+            background: Blue;
             padding: 1.5rem;
             border-radius: 15px;
             box-shadow: 0 4px 20px 0 rgba(0,0,0,0.05);
@@ -33,8 +33,8 @@ def apply_custom_styles():
         
         /* Custom sidebar */
         section[data-testid="stSidebar"] {
-            background-color: #0e1117;
-            color: white;
+            background-color: #164058;
+            color: Blue;
         }
         
         /* Headers */
