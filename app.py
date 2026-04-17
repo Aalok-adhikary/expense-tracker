@@ -5,211 +5,293 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import io
-import json
-import base64
-from sklearn.linear_model import LinearRegression
+import xlsxwriter
 
 # --- CONFIGURATION & STYLING ---
-st.set_page_config(page_title="Indian Smart Finance Hub", page_icon="🇮🇳", layout="wide")
+st.set_page_config(
+    page_title="Kuber - Indian Finance Hub", 
+    page_icon="💎", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-def local_css():
+def apply_custom_styles():
     st.markdown("""
         <style>
-        .main { background-color: #f8f9fa; }
-        .stButton>button { width: 100%; border-radius: 8px; height: 3em; background-color: #008CFF; color: white; }
-        .stMetric { background-color: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .card { background-color: white; padding: 25px; border-radius: 15px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        .sidebar-content { padding: 20px; }
+        /* Main background and font */
+        .main { background-color: #f0f2f6; font-family: 'Inter', sans-serif; }
+        
+        /* Glassmorphism Cards */
+        .metric-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px 0 rgba(0,0,0,0.05);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            text-align: center;
+        }
+        
+        /* Custom sidebar */
+        section[data-testid="stSidebar"] {
+            background-color: #0e1117;
+            color: white;
+        }
+        
+        /* Headers */
+        h1, h2, h3 { color: #1e293b; font-weight: 700; }
+        
+        /* Buttons */
+        .stButton>button {
+            border-radius: 10px;
+            height: 3rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .stButton>button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        /* Dataframes */
+        [data-testid="stTable"] { border-radius: 15px; overflow: hidden; }
+        
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+        .stTabs [data-baseweb="tab"] {
+            height: 50px;
+            white-space: pre-wrap;
+            font-weight: 600;
+            font-size: 16px;
+        }
         </style>
     """, unsafe_allow_html=True)
 
-# --- INITIALIZE SESSION STATE ---
+# --- INITIALIZATION ---
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'user_email' not in st.session_state:
     st.session_state.user_email = None
-if 'page' not in st.session_state:
-    st.session_state.page = "Dashboard"
+if 'active_tab' not in st.session_state:
+    st.session_state.active_tab = "Dashboard"
+
+# Simulated DB Initialization
 if 'expenses' not in st.session_state:
-    # Seed some dummy data relevant to Indian spending
-    dates = [datetime.now() - timedelta(days=x) for x in range(30)]
-    categories = ["Food & Swiggy", "Transport/Petrol", "Rent", "OTT/Mobile Recharges", "Utilities", "Shopping/Amazon", "UPI Transfers"]
+    dates = [datetime.now() - timedelta(days=x) for x in range(45)]
+    categories = ["Food & Swiggy", "Transport/Petrol", "Rent", "EMI", "Utilities", "Amazon/Shopping", "Investment/SIP"]
     st.session_state.expenses = pd.DataFrame({
+        'ID': range(45),
         'Date': pd.to_datetime([d.date() for d in dates]),
-        'Category': [np.random.choice(categories) for _ in range(30)],
-        'Amount': [np.random.uniform(50, 5000) for _ in range(30)],
-        'Description': ["Monthly expense" for _ in range(30)]
+        'Category': [np.random.choice(categories) for _ in range(45)],
+        'Amount': [np.random.uniform(200, 8000) for _ in range(45)],
+        'Description': ["Monthly expense" for _ in range(45)]
     })
 
-# --- GEMINI AI INTEGRATION ---
-async def get_ai_advice(query, context_data):
-    api_key = "AQ.Ab8RN6Jz2ThgIRNH4InHzZv5S_VSkAh76gUMHr1mA7ru1rbQmQ" # Environment provides key
-    system_prompt = "You are an expert Indian Financial Advisor. Analyze the user's spending data in INR (₹) and provide advice relevant to Indian tax laws, savings schemes like PPF/ELSS, and local spending habits."
-    user_query = f"Here is my Indian spending summary (all amounts in ₹): {context_data}. Question: {query}"
-    
-    payload = {
-        "contents": [{"parts": [{"text": user_query}]}],
-        "systemInstruction": {"parts": [{"text": system_prompt}]}
+if 'budgets' not in st.session_state:
+    st.session_state.budgets = {
+        "Food & Swiggy": 15000,
+        "Transport/Petrol": 8000,
+        "Rent": 25000,
+        "EMI": 20000,
+        "Utilities": 5000,
+        "Amazon/Shopping": 10000,
+        "Investment/SIP": 30000
     }
-    
-    try:
-        import requests
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
-        for delay in [1, 2, 4]:
-            response = requests.post(url, json=payload)
-            if response.status_code == 200:
-                result = response.json()
-                return result['candidates'][0]['content']['parts'][0]['text']
-        return "The Indian AI assistant is currently busy. Please try again later."
-    except Exception as e:
-        return f"Error connecting to AI: {str(e)}"
 
-# --- UTILITY FUNCTIONS ---
-def predict_future_expenses(df):
-    if len(df) < 5:
-        return None
-    daily_totals = df.groupby('Date')['Amount'].sum().reset_index()
-    daily_totals['DayCount'] = (daily_totals['Date'] - daily_totals['Date'].min()).dt.days
-    
-    X = daily_totals[['DayCount']]
-    y = daily_totals['Amount']
-    
-    model = LinearRegression()
-    model.fit(X, y)
-    
-    next_day = np.array([[daily_totals['DayCount'].max() + 1]])
-    prediction = model.predict(next_day)[0]
-    return max(0, prediction)
+# --- HELPER FUNCTIONS ---
+def save_expense(date, category, amount, desc):
+    df = st.session_state.expenses
+    new_id = df['ID'].max() + 1 if not df.empty else 0
+    new_row = pd.DataFrame([{
+        'ID': new_id,
+        'Date': pd.to_datetime(date),
+        'Category': category,
+        'Amount': amount,
+        'Description': desc
+    }])
+    st.session_state.expenses = pd.concat([df, new_row], ignore_index=True)
 
-# --- PAGE COMPONENTS ---
+def delete_expense(expense_id):
+    st.session_state.expenses = st.session_state.expenses[st.session_state.expenses['ID'] != expense_id]
+
+# --- PAGES ---
 
 def login_page():
-    st.markdown("<h1 style='text-align: center;'>🇮🇳 Indian Smart Finance Hub</h1>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1, 1.5, 1])
     with col2:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Login to Your Wallet")
-        email = st.text_input("Email Address", placeholder="name@example.in")
-        password = st.text_input("Password", type="password")
-        if st.button("Secure Login"):
-            if email and password:
-                st.session_state.authenticated = True
-                st.session_state.user_email = email
-                st.rerun()
-            else:
-                st.error("Please enter your credentials.")
+        st.markdown("<div style='text-align: center; padding-top: 50px;'>", unsafe_allow_html=True)
+        st.title("💎 Kuber")
+        st.subheader("Your Personal Wealth Guardian")
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        with st.container():
+            st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+            email = st.text_input("Email Address", placeholder="name@example.in")
+            password = st.text_input("Password", type="password")
+            if st.button("Access Dashboard"):
+                if email and password:
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = email
+                    st.rerun()
+                else:
+                    st.error("Please enter credentials.")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+def dashboard_tab():
+    df = st.session_state.expenses
+    current_month = datetime.now().month
+    month_df = df[df['Date'].dt.month == current_month]
+    
+    total_spent = month_df['Amount'].sum()
+    prev_month_spent = df[df['Date'].dt.month == (current_month - 1)]['Amount'].sum()
+    
+    # Hero Section
+    st.markdown(f"## Monthly Overview: {datetime.now().strftime('%B %Y')}")
+    m1, m2, m3, m4 = st.columns(4)
+    
+    with m1:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        st.metric("Total Spends", f"₹{total_spent:,.0f}")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with m2:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        change = ((total_spent - prev_month_spent) / prev_month_spent * 100) if prev_month_spent > 0 else 0
+        st.metric("vs Prev Month", f"{change:+.1f}%", delta_color="inverse")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with m3:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        top_cat = month_df.groupby('Category')['Amount'].sum().idxmax() if not month_df.empty else "N/A"
+        st.metric("Top Category", top_cat)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with m4:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        st.metric("Invested", f"₹{month_df[month_df['Category'] == 'Investment/SIP']['Amount'].sum():,.0f}")
         st.markdown("</div>", unsafe_allow_html=True)
 
-def sidebar_nav():
-    with st.sidebar:
-        st.markdown(f"### नमस्ते, \n**{st.session_state.user_email}**")
-        st.divider()
-        if st.button("📊 Dashboard"): st.session_state.page = "Dashboard"; st.rerun()
-        if st.button("💸 Add Expense"): st.session_state.page = "Add Expense"; st.rerun()
-        if st.button("🤖 Finance Guru (AI)"): st.session_state.page = "AI Assistant"; st.rerun()
-        if st.button("📥 Export Reports"): st.session_state.page = "Export"; st.rerun()
-        st.divider()
-        if st.button("🚪 Logout"):
-            st.session_state.authenticated = False
+    st.divider()
+
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        st.subheader("Spending Trend (Last 30 Days)")
+        trend = df.sort_values('Date').groupby('Date')['Amount'].sum().reset_index()
+        fig = px.line(trend, x='Date', y='Amount', markers=True, template="plotly_white")
+        fig.update_traces(line_color='#008CFF', line_width=3)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with c2:
+        st.subheader("Composition")
+        fig = px.pie(month_df, values='Amount', names='Category', hole=0.5)
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+def ledger_tab():
+    st.subheader("Transaction History")
+    
+    col_a, col_b = st.columns([1, 3])
+    
+    with col_a:
+        st.markdown("#### Log Expense")
+        with st.form("add_exp", clear_on_submit=True):
+            d = st.date_input("Date")
+            c = st.selectbox("Category", list(st.session_state.budgets.keys()) + ["Other"])
+            a = st.number_input("Amount (₹)", min_value=1)
+            de = st.text_input("Note")
+            if st.form_submit_button("Add to Ledger"):
+                save_expense(d, c, a, de)
+                st.success("Added!")
+                st.rerun()
+
+    with col_b:
+        search = st.text_input("🔍 Search transactions...", placeholder="Search description or category")
+        df_display = st.session_state.expenses.copy()
+        if search:
+            df_display = df_display[df_display['Description'].str.contains(search, case=False) | df_display['Category'].str.contains(search, case=False)]
+        
+        # Display as table with ID for reference
+        st.dataframe(df_display.sort_values('Date', ascending=False)[['Date', 'Category', 'Amount', 'Description', 'ID']], 
+                     use_container_width=True, hide_index=True)
+        
+        exp_to_del = st.number_input("Enter ID to delete", min_value=0, step=1)
+        if st.button("Delete Entry"):
+            delete_expense(exp_to_del)
+            st.warning(f"Deleted ID {exp_to_del}")
             st.rerun()
 
-def dashboard_view():
-    st.title("Indian Spending Insights")
+def budget_tab():
+    st.subheader("Monthly Budget Planner")
+    df = st.session_state.expenses
+    current_month = datetime.now().month
+    
+    st.info("Set your monthly limits below and track your adherence.")
+    
+    cols = st.columns(2)
+    for i, (cat, limit) in enumerate(st.session_state.budgets.items()):
+        with cols[i % 2]:
+            spent = df[(df['Category'] == cat) & (df['Date'].dt.month == current_month)]['Amount'].sum()
+            remaining = limit - spent
+            percent = min(100, int((spent / limit) * 100)) if limit > 0 else 0
+            
+            color = "green" if percent < 80 else "orange" if percent < 100 else "red"
+            
+            st.markdown(f"**{cat}**")
+            st.progress(percent / 100)
+            st.markdown(f"₹{spent:,.0f} / ₹{limit:,.0f} ({percent}%)")
+            
+            # Ability to update budget
+            new_limit = st.number_input(f"New limit for {cat}", value=limit, step=500, key=f"bud_{cat}")
+            st.session_state.budgets[cat] = new_limit
+
+def report_tab():
+    st.subheader("Data Export Center")
     df = st.session_state.expenses
     
-    # Top Stats
-    total_spent = df['Amount'].sum()
-    avg_spent = df['Amount'].mean()
-    predicted = predict_future_expenses(df)
+    st.markdown("Download your financial data for offline tax filing or analysis.")
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Monthly Spend", f"₹{total_spent:,.2f}")
-    col2.metric("Avg Transaction", f"₹{avg_spent:,.2f}")
-    col3.metric("Predicted Tomorrow", f"₹{predicted:,.2f}" if predicted else "N/A", delta_color="inverse")
-    
-    st.markdown("---")
-    
-    # Charts
     c1, c2 = st.columns(2)
+    
     with c1:
-        st.subheader("Category Breakdown")
-        fig = px.pie(df, values='Amount', names='Category', hole=.4, color_discrete_sequence=px.colors.qualitative.Prism)
-        st.plotly_chart(fig, use_container_width=True)
-        
+        st.markdown("#### CSV Report")
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download CSV", data=csv, file_name=f"Kuber_Report_{datetime.now().date()}.csv", mime="text/csv")
+        st.write("Best for importing into other financial tools.")
+
     with c2:
-        st.subheader("Daily Cash Flow")
-        trend_df = df.groupby('Date')['Amount'].sum().reset_index()
-        fig = px.area(trend_df, x='Date', y='Amount', line_shape='spline')
-        fig.update_traces(fillcolor="rgba(0, 140, 255, 0.2)", line_color="#008CFF")
-        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("#### Excel Report")
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='All Transactions')
+            # Summary sheet
+            summary = df.groupby('Category')['Amount'].sum().reset_index()
+            summary.to_excel(writer, index=False, sheet_name='Summary')
+        excel_data = output.getvalue()
+        st.download_button("📥 Download Excel", data=excel_data, file_name=f"Kuber_Full_Report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.write("Includes transaction logs and category summaries.")
 
-    st.subheader("Recent UPI & Card Transactions")
-    st.dataframe(df.sort_values('Date', ascending=False), use_container_width=True)
-
-def add_expense_view():
-    st.title("Log a Transaction")
-    with st.form("expense_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        date = col1.date_input("Transaction Date", datetime.now())
-        category = col1.selectbox("Spending Category", 
-            ["Food & Swiggy", "Transport/Petrol", "Rent", "OTT/Mobile Recharges", "Utilities", "Shopping/Amazon", "UPI Transfers", "Health", "Investment", "Other"])
-        amount = col2.number_input("Amount (₹)", min_value=1.0, step=1.0)
-        desc = col2.text_input("Transaction Note", placeholder="Paid via GPay/PhonePe")
-        
-        submitted = st.form_submit_button("Log in Ledger")
-        if submitted:
-            new_row = {'Date': pd.to_datetime(date), 'Category': category, 'Amount': amount, 'Description': desc}
-            st.session_state.expenses = pd.concat([st.session_state.expenses, pd.DataFrame([new_row])], ignore_index=True)
-            st.success("Expense added to your Indian ledger!")
-
-def ai_assistant_view():
-    st.title("AI Finance Guru")
-    st.info("Your AI assistant understands Indian tax sections (80C), savings schemes, and local cost of living.")
-    
-    query = st.text_input("Ask about your budget or Indian taxes:", placeholder="How can I save more under 80C based on my spending?")
-    
-    if query:
-        summary = st.session_state.expenses.groupby('Category')['Amount'].sum().to_dict()
-        with st.spinner("Analyzing your finances..."):
-            import asyncio
-            advice = asyncio.run(get_ai_advice(query, json.dumps(summary)))
-            st.markdown(f"<div class='card'>{advice}</div>", unsafe_allow_html=True)
-
-def export_view():
-    st.title("Generate Financial Reports")
-    df = st.session_state.expenses
-    
-    st.markdown("### Download Transactions")
-    col1, col2 = st.columns(2)
-    
-    # CSV
-    csv = df.to_csv(index=False).encode('utf-8')
-    col1.download_button("Download as CSV", data=csv, file_name="indian_expenses.csv", mime="text/csv")
-    
-    # Excel
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Expenses')
-    excel_data = output.getvalue()
-    col2.download_button("Download as Excel (xlsx)", data=excel_data, file_name="indian_expenses.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    
-    st.divider()
-    if st.button("Reset Entire Ledger", type="secondary"):
-        st.session_state.expenses = pd.DataFrame(columns=['Date', 'Category', 'Amount', 'Description'])
-        st.warning("All records deleted.")
-
-# --- MAIN ROUTING ---
-local_css()
+# --- MAIN APP FLOW ---
+apply_custom_styles()
 
 if not st.session_state.authenticated:
     login_page()
 else:
-    sidebar_nav()
-    if st.session_state.page == "Dashboard":
-        dashboard_view()
-    elif st.session_state.page == "Add Expense":
-        add_expense_view()
-    elif st.session_state.page == "AI Assistant":
-        ai_assistant_view()
-    elif st.session_state.page == "Export":
-        export_view()
+    # Sidebar Navigation
+    with st.sidebar:
+        st.title("💎 Kuber")
+        st.write(f"Logged in as: **{st.session_state.user_email}**")
+        st.divider()
+        
+        page = st.radio("Navigation", ["Dashboard", "My Ledger", "Budget Planner", "Reports"], label_visibility="collapsed")
+        
+        st.spacer = st.container()
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.authenticated = False
+            st.rerun()
+
+    # Page Routing
+    if page == "Dashboard":
+        dashboard_tab()
+    elif page == "My Ledger":
+        ledger_tab()
+    elif page == "Budget Planner":
+        budget_tab()
+    elif page == "Reports":
+        report_tab()
