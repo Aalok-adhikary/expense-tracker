@@ -38,7 +38,7 @@ def apply_custom_styles():
         }
         
         /* Headers */
-        h1, h2, h3 { color: #1e293b; font-weight: 700; }
+        h1, h2, h3 { color: #000000; font-weight: 700; }
         
         /* Buttons */
         .stButton>button {
